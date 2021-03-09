@@ -1,0 +1,187 @@
+---
+title: "Prediction classification of exercise data"
+author: "Haridas P T"
+date: "March 9, 2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+The files are kept in the ProjectWorking Directory
+
+Import the input and output files
+```{r}
+set.seed(33333)
+if (file.exists("./pml-training.csv")) {
+  rawtraining <- read.csv("./pml-training.csv",na.strings = c("NA",""))
+} else {
+  print("ERROR: The file pml-training.csv is not in the current working directory")  
+}
+if (file.exists("./pml-testing.csv")) {
+  rawprediction <- read.csv("./pml-testing.csv",na.strings = c("NA",""))
+} else {
+  print("ERROR: The file pml-testing.csv is not in the current working directory");
+}
+dim(rawtraining);dim(rawprediction);
+
+```
+Keep only those rows where sum of "NA"s is column are zero
+```{r}
+trainingMaster <- rawtraining[, colSums(is.na(rawtraining)) == 0]
+prediction <- rawprediction[, colSums(is.na(rawprediction)) == 0]
+```
+find differences in column names if any
+```{r}
+if(identical(names(trainingMaster),names(prediction))){
+  print("The non na cell names are same");
+} else {
+  print("These are the columns which are different among non na columns");
+  print(paste0( names(trainingMaster)[!(names(trainingMaster) %in% names(prediction))]," is absent in prediction"));
+  print(paste0( names(prediction)[!(names(trainingMaster) %in% names(prediction))]," is absent in trainingMaster"));
+}
+```
+
+Now, remove the non sensor columns which obviously is not going to impact the results
+```{r}
+trainingMaster_non_sensor_clmn_names=c("X","user_name","raw_timestamp_part_1","raw_timestamp_part_2","cvtd_timestamp","new_window","num_window")
+prediction_non_sensor_clmn_names=c("X","user_name","raw_timestamp_part_1","raw_timestamp_part_2","cvtd_timestamp","new_window","num_window","problem_id")
+trainingMaster<-trainingMaster[,!(names(trainingMaster) %in% trainingMaster_non_sensor_clmn_names)]
+prediction<-prediction[,!(names(prediction) %in% prediction_non_sensor_clmn_names)]
+print(paste0("After removing the non sensor columns"))
+print(dim(trainingMaster))
+print(dim(prediction));
+```
+check the type of variables
+```{r}
+sapply(trainingMaster,class);
+```
+change the variable classe as a factor variable
+```{r}
+trainingMaster$classe<-as.factor(trainingMaster$classe)
+```
+Since columns are cleaned up same proceed to the next step of partitioning the data
+keep 70% of training data for training and remaining for testing
+```{r}
+library(caret)
+library(randomForest); 
+trainingIDs<-createDataPartition(trainingMaster$classe,p=0.7,list=FALSE)
+training<-trainingMaster[trainingIDs,]
+testing<-trainingMaster[-trainingIDs,]
+summary(training);
+```
+##Classifier rpart
+Now attempt rpart classifier
+```{r}
+modFit<-train(classe ~.,method="rpart",data=training)
+print(modFit$finalModel)
+print(modFit$results$Accuracy) 
+```
+**accuracy** is only **51%** which is not acceptable 
+```{r}
+library(rattle)
+fancyRpartPlot(modFit$finalModel)
+```
+
+
+Attempting **random forest** classifier with default crossvalidation
+```{r}
+trControl <- trainControl(method = "cv")
+start_time <- Sys.time()
+modFitRF_trainingD_allvars<-train(classe ~., method="rf",data=training,trControl=trControl)
+end_time <- Sys.time()
+print(paste0("The rf training with all training data and all variables took ", end_time-start_time))
+confusionMatrix(modFitRF_trainingD_allvars)
+print(modFitRF_trainingD_allvars$finalModel)
+modFitRF_trainingD_allvars$finalModel$importance
+varImpPlot(modFitRF_trainingD_allvars$finalModel)
+```
+The above one took considerble time (**22.82min**) since the model had used all the 
+possible variables and gave an accuracy **0.992**. The importance of the variables
+is plotted using the varImpPlot function from randomForest and the 
+top 16 variables from MeanDecreaseGini is used for further prediction
+The top 16 variables are
+*roll_belt+yaw_belt+
+*magnet_dumbbell_z+magnet_dumbbell_y+
+*pitch_belt+pitch_forearm+magnet_dumbbell_x+
+*roll_forearm+accel_belt_z+
+*roll_dumbbell+magnet_belt_z+
+*magnet_belt_y+accel_dumbbell_y+roll_arm+
+*accel_dumbbell_z+accel_forearm_x
+
+```{r}
+start_time<-Sys.time()
+modFitRF_trainingD_LimitedVars<-train(classe ~ roll_belt+yaw_belt+magnet_dumbbell_z+magnet_dumbbell_y+pitch_belt+pitch_forearm+magnet_dumbbell_x+roll_forearm+accel_belt_z+roll_dumbbell+magnet_belt_z+magnet_belt_y+accel_dumbbell_y+roll_arm+accel_dumbbell_z+accel_forearm_x, method="rf",data=training,trControl=trControl)
+end_time <- Sys.time()
+print(paste0("The rf training with all training data and limited variables took ", end_time-start_time))
+
+confusionMatrix(modFitRF_trainingD_LimitedVars)
+print(modFitRF_trainingD_LimitedVars$finalModel)
+```
+This ran really quick (6.421 min) and gave an accuracy of 0.987 (ie; OOB 2.4%) which is pretty good. Just to check if I would have got the important variables with using only a subset of the training set the below step is done
+```{r}
+smallsetIDs<-createDataPartition(training$classe,p=0.3,list=FALSE)
+smallset<-training[smallsetIDs,]
+dim(smallset)
+start_time <-Sys.time()
+modFitRF_subset_training_Allvars<-train(classe ~., method="rf",data=smallset,trControl=trControl)
+end_time <- Sys.time()
+print(paste0("The rf training with a subset of training data and all variables took ", end_time-start_time))
+confusionMatrix(modFitRF_subset_training_Allvars)
+print(modFitRF_subset_training_Allvars$finalModel)
+```
+
+This gave **0.968** accuracy OOB (2.9%) took **5.219min** and listed the below variabls 
+(same as the full training set) as the top 16 variables with only a few moving
+up and down the significance ladder. In essence, selecting a smaller set from training
+set and using it to identify the significant paramters and then using only those parameters
+for performing a fit with random forest using the full set of training data parameters 
+can save computation time with out compromising accuracy
+
+```{r}
+varImpPlot(modFitRF_subset_training_Allvars$finalModel)
+```
+Top 16 variables in the order of importance 
+(all members are same as that obtained using full set of training data) 
+roll_belt+pitch_forearm+magnet_dumbbell_z+
+yaw_belt+magnet_dumbbell_y+roll_forearm+pitch_belt
+accel_dumbbell_y+roll_dumbbell+
+accel_forearm_x+magnet_dumbbell_x+accel_dumbbell_z+magnet_belt_z
+
+Now we can build a model with only the identified variables using the full training data
+```{r}
+
+start_time<-Sys.time()
+modFitRF_training_LimVarfromsubset<-train(classe ~ roll_belt+pitch_forearm+magnet_dumbbell_z+yaw_belt+magnet_dumbbell_y+roll_forearm+pitch_belt+accel_dumbbell_y+roll_dumbbell+accel_forearm_x+magnet_dumbbell_x+accel_dumbbell_z+magnet_belt_z, method="rf",data=training,trControl=trControl)
+end_time <- Sys.time()
+print(paste0("The rf training with a All training data and limited variables derived from subset took ", end_time-start_time))
+
+confusionMatrix(modFitRF_training_LimVarfromsubset)
+print(modFitRF_training_LimVarfromsubset$finalModel)
+
+```
+Accuracy of **98.5%** with a time of **5.3** mins
+#TESTING THE MODELS
+```{r}
+alltrainingD_allvars_testres<-predict(modFitRF_trainingD_allvars,newdata = testing)
+confusionMatrix(alltrainingD_allvars_testres,testing$classe)
+trainingD_LimitedVars_testres<-predict(modFitRF_trainingD_LimitedVars,newdata = testing)
+confusionMatrix(trainingD_LimitedVars_testres,testing$classe)
+trainingSSD_Allvars_testres<-predict(modFitRF_subset_training_Allvars,newdata = testing)
+confusionMatrix(trainingSSD_Allvars_testres,testing$classe)
+trainingD_LimitedVarsfromSSD_testres<-predict(modFitRF_training_LimVarfromsubset,newdata = testing)
+confusionMatrix(trainingD_LimitedVarsfromSSD_testres,testing$classe)
+```
+Hence **98.7** accuracy can be obtained using limited number of variables and training model with the entire training set
+
+#Predicting with the models
+```{r}
+alltrainingD_allvars_pred<-predict(modFitRF_trainingD_allvars,newdata = prediction)
+trainingD_LimitedVars_pred<-predict(modFitRF_trainingD_LimitedVars,newdata = prediction)
+trainingSSD_Allvars_pred<-predict(modFitRF_subset_training_Allvars,newdata = prediction)
+trainingD_LimitedVarsfromSSD_pred<-predict(modFitRF_training_LimVarfromsubset,newdata = prediction)
+alltrainingD_allvars_pred
+trainingD_LimitedVarsfromSSD_pred
+```
+Except for 1 prediction both methods have given identical predictions.
+```
