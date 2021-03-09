@@ -1,0 +1,3 @@
+# MLCourseProject
+Practical Machine Learning course work
+In this project to predict the classification of exercise data; random forest classifier is used. Initial attempt to train took significant time to generate the model (~25 mins) with a good amount of accuracy. Another approach used was to use a subset to train and arrive at the critical parameters. Then these critical parameters were only used to create the model using the full data from training set. This approach saved significant time with only 2 % loss of accuracy. Then all the above models were used to predict the data given in the prediction set and the output is compared. 
